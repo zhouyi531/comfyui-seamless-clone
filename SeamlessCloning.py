@@ -12,6 +12,8 @@ class SeamlessCloning:
                 "destination_image": ("IMAGE",),
                 "mask_image": ("MASK",),
                 "blend_mode": (["NORMAL_CLONE", "MIXED_CLONE", "MONOCHROME_TRANSFER"],),
+                "center_x": ("INT", {"default": 0, "min": 0, "max": 8192}),
+                "center_y": ("INT", {"default": 0, "min": 0, "max": 8192}),
             },
         }
 
@@ -20,7 +22,7 @@ class SeamlessCloning:
     CATEGORY = "Image Processing"
     FUNCTION = "seamless_clone"
 
-    def seamless_clone(self, source_image, destination_image, mask_image, blend_mode):
+    def seamless_clone(self, source_image, destination_image, mask_image, blend_mode, center_x=None, center_y=None):
 
         # Ensure batch size is 1 for simplicity
         if source_image.shape[0] != 1 or destination_image.shape[0] != 1 or mask_image.shape[0] != 1:
@@ -60,12 +62,17 @@ class SeamlessCloning:
         source_image_cv = cv2.cvtColor(source_image_np, cv2.COLOR_RGB2BGR)
         destination_image_cv = cv2.cvtColor(destination_image_np, cv2.COLOR_RGB2BGR)
 
-        # Set clone_center to center of destination image
-        clone_center = (destination_image_cv.shape[1] // 2, destination_image_cv.shape[0] // 2)
+        # Calculate the center of the mask if center_x and center_y are not provided
+        if center_x == 0 and center_y == 0:
+            mask_indices = np.argwhere(mask_np > 0)
+            mask_center = mask_indices.mean(axis=0).astype(int)
+            center_x, center_y = mask_center[1], mask_center[0]  # (x, y) format
 
-        print(f"destination_image_cv.shape: {destination_image_cv.shape}")
+        # Use the calculated or provided center coordinates
+        clone_center = (center_x, center_y)
+
         print(f"clone_center: {clone_center}")
-
+        
         # Map blend_mode string to OpenCV constant
         blend_mode_dict = {
             "NORMAL_CLONE": cv2.NORMAL_CLONE,

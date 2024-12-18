@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-seamless-clone"
-description = ""
+description = "Seamless Clone for ComfyUI"
 version = "1.0.0"
 license = {file = "LICENSE"}
 dependencies = ["numpy==2.2.0", "opencv_python==4.10.0.84", "torch==2.5.1"]

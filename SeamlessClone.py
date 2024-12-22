@@ -2,7 +2,7 @@ import torch
 import cv2
 import numpy as np
 
-class SeamlessCloning:
+class SeamlessClone:
 
     @classmethod
     def INPUT_TYPES(cls):

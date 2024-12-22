@@ -1,7 +1,7 @@
-from .SeamlessCloning import SeamlessCloning
+from .SeamlessClone import SeamlessClone
 
 NODE_CLASS_MAPPINGS = {
-    "Seamless Cloning": SeamlessCloning,
+    "Seamless Clone": SeamlessClone,
 }
 
 __all__ = ['NODE_CLASS_MAPPINGS']

@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-seamless-clone"
-description = "Seamless Clone for ComfyUI"
-version = "1.0.1"
+description = "Seamless Clone Using OpenCV for ComfyUI"
+version = "1.0.2"
 license = {file = "LICENSE"}
 dependencies = ["numpy==2.2.0", "opencv_python==4.10.0.84", "torch==2.5.1"]
 
@@ -11,5 +11,5 @@ Repository = "https://github.com/Aksaz/comfyui-seamless-clone"
 
 [tool.comfy]
 PublisherId = "mahdi"
-DisplayName = "comfyui-seamless-clone"
+DisplayName = "ComfyUI Seamless Clone"
 Icon = ""

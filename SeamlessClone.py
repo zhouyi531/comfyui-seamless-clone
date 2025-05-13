@@ -58,20 +58,62 @@ class SeamlessClone:
             # Mask is empty; cannot proceed
             raise ValueError("Mask is empty after processing.")
 
+        # Get destination image dimensions (H, W)
+        dest_h, dest_w = destination_image_np.shape[:2]
+
         # Convert images to BGR for OpenCV
         source_image_cv = cv2.cvtColor(source_image_np, cv2.COLOR_RGB2BGR)
         destination_image_cv = cv2.cvtColor(destination_image_np, cv2.COLOR_RGB2BGR)
 
-        # Calculate the center of the mask if center_x and center_y are not provided
-        if center_x == 0 and center_y == 0:
-            mask_indices = np.argwhere(mask_np > 0)
-            mask_center = mask_indices.mean(axis=0).astype(int)
-            center_x, center_y = mask_center[1], mask_center[0]  # (x, y) format
+        # Calculate the actual width and height of the mask's content
+        mask_indices_y, mask_indices_x = np.where(mask_np > 0)
+        min_mask_x = np.min(mask_indices_x)
+        max_mask_x = np.max(mask_indices_x)
+        min_mask_y = np.min(mask_indices_y)
+        max_mask_y = np.max(mask_indices_y)
+        mask_actual_width = max_mask_x - min_mask_x + 1
+        mask_actual_height = max_mask_y - min_mask_y + 1
 
-        # Use the calculated or provided center coordinates
-        clone_center = (center_x, center_y)
+        # Determine the desired center for cloning.
+        # If input center_x, center_y are default (0,0), calculate from mask's bounding box center.
+        # Otherwise, use the user-provided center_x, center_y.
+        desired_cx = center_x
+        desired_cy = center_y
+        if center_x == 0 and center_y == 0: # Default value check from INPUT_TYPES
+            desired_cx = min_mask_x + (mask_actual_width - 1) // 2
+            desired_cy = min_mask_y + (mask_actual_height - 1) // 2
+        
+        # Clamp the desired center coordinates to ensure the entire mask bounding box
+        # fits within the destination image when centered at the clamped coordinates.
+        
+        # Offset from the center of the mask's bounding box to its left/top edge.
+        offset_x_to_left_edge = (mask_actual_width - 1) // 2
+        # Offset from the center of the mask's bounding box to its right/bottom edge.
+        # (mask_actual_width - 1 - offset_x_to_left_edge) is also valid for offset_x_to_right_edge
+        offset_x_to_right_edge = mask_actual_width - 1 - offset_x_to_left_edge
 
-        print(f"clone_center: {clone_center}")
+        offset_y_to_top_edge = (mask_actual_height - 1) // 2
+        offset_y_to_bottom_edge = mask_actual_height - 1 - offset_y_to_top_edge
+
+        # Min/max allowable center points for the clone operation
+        # cx must be >= offset_x_to_left_edge
+        # cx must be <= dest_w - 1 - offset_x_to_right_edge
+        min_allowable_cx = offset_x_to_left_edge
+        max_allowable_cx = dest_w - 1 - offset_x_to_right_edge
+        
+        min_allowable_cy = offset_y_to_top_edge
+        max_allowable_cy = dest_h - 1 - offset_y_to_bottom_edge
+
+        # Clamp the desired center to the allowable range.
+        # Ensure that min_allowable <= max_allowable, which is true if mask_actual_width <= dest_w.
+        # This condition holds because mask_np is resized to destination dimensions.
+        clamped_cx = np.clip(desired_cx, min_allowable_cx, max_allowable_cx).astype(int)
+        clamped_cy = np.clip(desired_cy, min_allowable_cy, max_allowable_cy).astype(int)
+
+        # Use the clamped center coordinates
+        clone_center = (clamped_cx, clamped_cy)
+
+        print(f"Original desired_center: ({desired_cx},{desired_cy}), Clamped clone_center: {clone_center}, MaskBBox: {mask_actual_width}x{mask_actual_height}, DestSize: {dest_w}x{dest_h}")
         
         # Map blend_mode string to OpenCV constant
         blend_mode_dict = {

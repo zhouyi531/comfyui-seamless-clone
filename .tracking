@@ -1,0 +1,7 @@
+README.md
+.gitignore
+__init__.py
+SeamlessClone.py
+pyproject.toml
+requirements.txt
+.github/workflows/publish_action.yml

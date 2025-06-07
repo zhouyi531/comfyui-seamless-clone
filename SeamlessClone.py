@@ -28,9 +28,9 @@ class SeamlessClone:
         if source_image.shape[0] != 1 or destination_image.shape[0] != 1 or mask_image.shape[0] != 1:
             raise ValueError("Batch size greater than 1 is not supported.")
 
-        # Convert images to numpy arrays and scale to [0, 255]
-        source_image_np = (source_image[0].cpu().numpy() * 255).astype(np.uint8)
-        destination_image_np = (destination_image[0].cpu().numpy() * 255).astype(np.uint8)
+        # Convert images to numpy arrays and scale to [0, 255] with proper clipping
+        source_image_np = np.clip((source_image[0].cpu().numpy() * 255.0), 0, 255).astype(np.uint8)
+        destination_image_np = np.clip((destination_image[0].cpu().numpy() * 255.0), 0, 255).astype(np.uint8)
 
         # Mask is in [0,1] range (since it's a torch.Tensor)
         mask_np = mask_image[0].cpu().numpy()
@@ -50,7 +50,8 @@ class SeamlessClone:
         elif mask_np.ndim == 3:
             mask_np = mask_np[:, :, 0]
 
-        # Ensure mask is binary (0 or 255)
+        # Ensure mask is binary (0 or 255) with proper thresholding
+        mask_np = np.clip(mask_np, 0, 1)
         mask_np = (mask_np > 0.5).astype(np.uint8) * 255
 
         # Check if mask is empty
@@ -61,9 +62,17 @@ class SeamlessClone:
         # Get destination image dimensions (H, W)
         dest_h, dest_w = destination_image_np.shape[:2]
 
-        # Convert images to BGR for OpenCV
-        source_image_cv = cv2.cvtColor(source_image_np, cv2.COLOR_RGB2BGR)
-        destination_image_cv = cv2.cvtColor(destination_image_np, cv2.COLOR_RGB2BGR)
+        # Ensure images are in correct format for OpenCV
+        # ComfyUI images are RGB, OpenCV expects BGR
+        if source_image_np.ndim == 3 and source_image_np.shape[2] == 3:
+            source_image_cv = cv2.cvtColor(source_image_np, cv2.COLOR_RGB2BGR)
+        else:
+            source_image_cv = source_image_np
+            
+        if destination_image_np.ndim == 3 and destination_image_np.shape[2] == 3:
+            destination_image_cv = cv2.cvtColor(destination_image_np, cv2.COLOR_RGB2BGR)
+        else:
+            destination_image_cv = destination_image_np
 
         # Calculate the actual width and height of the mask's content
         mask_indices_y, mask_indices_x = np.where(mask_np > 0)
@@ -123,16 +132,24 @@ class SeamlessClone:
         }
         mode = blend_mode_dict.get(blend_mode, cv2.NORMAL_CLONE)
 
-        # Perform seamless cloning
-        output_cv = cv2.seamlessClone(
-            source_image_cv, destination_image_cv, mask_np, clone_center, mode
-        )
+        try:
+            # Perform seamless cloning
+            output_cv = cv2.seamlessClone(
+                source_image_cv, destination_image_cv, mask_np, clone_center, mode
+            )
+        except cv2.error as e:
+            print(f"OpenCV seamlessClone error: {e}")
+            # Fallback: return destination image if seamless clone fails
+            output_cv = destination_image_cv
 
-        # Convert output to RGB
-        output_rgb = cv2.cvtColor(output_cv, cv2.COLOR_BGR2RGB)
+        # Convert output back to RGB format (from BGR)
+        if output_cv.ndim == 3 and output_cv.shape[2] == 3:
+            output_rgb = cv2.cvtColor(output_cv, cv2.COLOR_BGR2RGB)
+        else:
+            output_rgb = output_cv
 
-        # Convert to torch.Tensor and scale to [0, 1]
-        output_tensor = torch.from_numpy(output_rgb.astype(np.float32) / 255.0)
+        # Convert to torch.Tensor and scale to [0, 1] with proper clipping
+        output_tensor = torch.from_numpy(np.clip(output_rgb.astype(np.float32) / 255.0, 0.0, 1.0))
 
         # Add batch dimension
         output_tensor = output_tensor.unsqueeze(0)  # Shape [1, H, W, C]

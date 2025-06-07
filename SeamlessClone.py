@@ -74,55 +74,36 @@ class SeamlessClone:
         else:
             destination_image_cv = destination_image_np
 
-        # Calculate the actual width and height of the mask's content
-        mask_indices_y, mask_indices_x = np.where(mask_np > 0)
-        min_mask_x = np.min(mask_indices_x)
-        max_mask_x = np.max(mask_indices_x)
-        min_mask_y = np.min(mask_indices_y)
-        max_mask_y = np.max(mask_indices_y)
-        mask_actual_width = max_mask_x - min_mask_x + 1
-        mask_actual_height = max_mask_y - min_mask_y + 1
+        # Calculate the center of the mask if center_x and center_y are not provided
+        if center_x == 0 and center_y == 0:
+            mask_indices = np.argwhere(mask_np > 0)
+            if len(mask_indices) > 0:
+                mask_center = mask_indices.mean(axis=0).astype(int)
+                center_x, center_y = mask_center[1], mask_center[0]  # (x, y) format
+            else:
+                # Fallback to image center if mask is invalid
+                center_x, center_y = dest_w // 2, dest_h // 2
 
-        # Determine the desired center for cloning.
-        # If input center_x, center_y are default (0,0), calculate from mask's bounding box center.
-        # Otherwise, use the user-provided center_x, center_y.
-        desired_cx = center_x
-        desired_cy = center_y
-        if center_x == 0 and center_y == 0: # Default value check from INPUT_TYPES
-            desired_cx = min_mask_x + (mask_actual_width - 1) // 2
-            desired_cy = min_mask_y + (mask_actual_height - 1) // 2
+        # Use the calculated or provided center coordinates
+        clone_center = (center_x, center_y)
+        print(f"Initial clone_center: {clone_center}")
         
-        # Clamp the desired center coordinates to ensure the entire mask bounding box
-        # fits within the destination image when centered at the clamped coordinates.
+        # Check if mask touches image boundaries and adjust if necessary
+        mask_adjusted = self._adjust_mask_for_boundaries(mask_np, dest_h, dest_w)
         
-        # Offset from the center of the mask's bounding box to its left/top edge.
-        offset_x_to_left_edge = (mask_actual_width - 1) // 2
-        # Offset from the center of the mask's bounding box to its right/bottom edge.
-        # (mask_actual_width - 1 - offset_x_to_left_edge) is also valid for offset_x_to_right_edge
-        offset_x_to_right_edge = mask_actual_width - 1 - offset_x_to_left_edge
-
-        offset_y_to_top_edge = (mask_actual_height - 1) // 2
-        offset_y_to_bottom_edge = mask_actual_height - 1 - offset_y_to_top_edge
-
-        # Min/max allowable center points for the clone operation
-        # cx must be >= offset_x_to_left_edge
-        # cx must be <= dest_w - 1 - offset_x_to_right_edge
-        min_allowable_cx = offset_x_to_left_edge
-        max_allowable_cx = dest_w - 1 - offset_x_to_right_edge
-        
-        min_allowable_cy = offset_y_to_top_edge
-        max_allowable_cy = dest_h - 1 - offset_y_to_bottom_edge
-
-        # Clamp the desired center to the allowable range.
-        # Ensure that min_allowable <= max_allowable, which is true if mask_actual_width <= dest_w.
-        # This condition holds because mask_np is resized to destination dimensions.
-        clamped_cx = np.clip(desired_cx, min_allowable_cx, max_allowable_cx).astype(int)
-        clamped_cy = np.clip(desired_cy, min_allowable_cy, max_allowable_cy).astype(int)
-
-        # Use the clamped center coordinates
-        clone_center = (clamped_cx, clamped_cy)
-
-        print(f"Original desired_center: ({desired_cx},{desired_cy}), Clamped clone_center: {clone_center}, MaskBBox: {mask_actual_width}x{mask_actual_height}, DestSize: {dest_w}x{dest_h}")
+        # If mask was adjusted, recalculate center if it was auto-calculated
+        if not np.array_equal(mask_np, mask_adjusted):
+            print("Mask was adjusted to avoid boundary issues")
+            if center_x == 0 and center_y == 0:
+                # Recalculate center for adjusted mask
+                if np.count_nonzero(mask_adjusted) > 0:
+                    mask_indices = np.argwhere(mask_adjusted > 0)
+                    mask_center = mask_indices.mean(axis=0).astype(int)
+                    center_x, center_y = mask_center[1], mask_center[0]
+                    clone_center = (center_x, center_y)
+                    print(f"Adjusted clone_center: {clone_center}")
+                else:
+                    raise ValueError("Mask became empty after boundary adjustment.")
         
         # Map blend_mode string to OpenCV constant
         blend_mode_dict = {
@@ -133,14 +114,29 @@ class SeamlessClone:
         mode = blend_mode_dict.get(blend_mode, cv2.NORMAL_CLONE)
 
         try:
-            # Perform seamless cloning
+            # Perform seamless cloning with adjusted mask
             output_cv = cv2.seamlessClone(
-                source_image_cv, destination_image_cv, mask_np, clone_center, mode
+                source_image_cv, destination_image_cv, mask_adjusted, clone_center, mode
             )
         except cv2.error as e:
-            print(f"OpenCV seamlessClone error: {e}")
-            # Fallback: return destination image if seamless clone fails
-            output_cv = destination_image_cv
+            # If still failing, try with a more conservative approach
+            print(f"OpenCV error occurred: {e}")
+            print("Attempting fallback with further mask adjustment...")
+            
+            try:
+                # More aggressive mask adjustment
+                mask_conservative = self._create_conservative_mask(mask_adjusted, dest_h, dest_w, clone_center)
+                
+                if np.count_nonzero(mask_conservative) == 0:
+                    raise ValueError("Unable to create a valid mask for seamless cloning. The mask region may be too close to image boundaries.")
+                
+                output_cv = cv2.seamlessClone(
+                    source_image_cv, destination_image_cv, mask_conservative, clone_center, mode
+                )
+            except cv2.error as e2:
+                print(f"Conservative approach also failed: {e2}")
+                # Final fallback: return destination image
+                output_cv = destination_image_cv
 
         # Convert output back to RGB format (from BGR)
         if output_cv.ndim == 3 and output_cv.shape[2] == 3:
@@ -155,3 +151,40 @@ class SeamlessClone:
         output_tensor = output_tensor.unsqueeze(0)  # Shape [1, H, W, C]
 
         return (output_tensor,)
+    
+    def _adjust_mask_for_boundaries(self, mask, height, width):
+        """
+        Adjust mask to avoid boundary issues with seamlessClone.
+        Remove mask pixels that are too close to image edges.
+        """
+        adjusted_mask = mask.copy()
+        
+        # Define minimum distance from edges (in pixels)
+        edge_margin = 3
+        
+        # Set edge regions to 0
+        adjusted_mask[:edge_margin, :] = 0  # Top edge
+        adjusted_mask[-edge_margin:, :] = 0  # Bottom edge
+        adjusted_mask[:, :edge_margin] = 0  # Left edge
+        adjusted_mask[:, -edge_margin:] = 0  # Right edge
+        
+        return adjusted_mask
+    
+    def _create_conservative_mask(self, mask, height, width, center):
+        """
+        Create a more conservative mask by eroding the mask and ensuring
+        it doesn't touch boundaries.
+        """
+        # Apply morphological erosion to shrink the mask
+        kernel = np.ones((5, 5), np.uint8)
+        eroded_mask = cv2.erode(mask, kernel, iterations=1)
+        
+        # Apply larger edge margin
+        edge_margin = 10
+        conservative_mask = eroded_mask.copy()
+        conservative_mask[:edge_margin, :] = 0
+        conservative_mask[-edge_margin:, :] = 0
+        conservative_mask[:, :edge_margin] = 0
+        conservative_mask[:, -edge_margin:] = 0
+        
+        return conservative_mask
